@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Anime Character</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            /* A warm, slightly dark, blurred background to match the image's depth of field */
+            background: radial-gradient(circle at 50% 40%, #4a413d 0%, #171518 80%);
+            font-family: sans-serif;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 1.2rem;
+            letter-spacing: 2px;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+    </style>
+    <!-- Import Three.js via ES Modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">Generating Voxels...</div>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Configuration & Voxel Design ---
+
+        // Color Palette extracted/inspired by the image
+        const colors = {
+            'H': 0x242226, // Hair (Dark grey/black)
+            'D': 0x141215, // Darker Hair (depth)
+            'S': 0xffe9df, // Skin (Pale peach)
+            'R': 0xe83545, // Eye (Deep Red)
+            'P': 0xff9eb2, // Eye Highlight (Pinkish)
+            'W': 0xf8f9fa, // Uniform Collar (White)
+            'J': 0x2b2d35, // Jacket (Dark slate/navy)
+            'T': 0xd62828, // Tie/Ribbon (Red)
+            'C': 0x5c4d47  // Choker (Brown/Grey)
+        };
+
+        // 3D Voxel Map (Layers from Front Z to Back Z)
+        // Space ' ' means empty block.
+        const voxelLayers = [
+            // Z = 2: Foremost details (nose, tie knot, stray front hair)
+            [
+                "                 ",
+                "                 ",
+                "                 ",
+                "                 ",
+                "                 ",
+                "     H     H     ",
+                "                 ",
+                "                 ",
+                "        S        ", // Nose tip
+                "                 ",
+                "                 ",
+                "                 ",
+                "        T        ", // Tie knot
+                "                 ",
+                "                 ",
+                "                 ",
+                "                 "
+            ],
+            // Z = 1: Face front, front bangs (hime cut), collar edge
+            [
+                "                 ",
+                "                 ",
+                "                 ",
+                "      HHHHH      ",
+                "     HHHHHHH     ",
+                "    HHHHHHHHH    ",
+                "    H SSSSS H    ",
+                "    H PRSRP H    ", // Eyes with highlight
+                "    H SSSSS H    ",
+                "    HHHHHHHHH    ", // Bottom of side bangs
+                "                 ",
+                "        C        ", // Choker
+                "       WWW       ", // Collar V
+                "      WWWWWW     ",
+                "      WW T WW    ", // Collar passing tie
+                "        TTT      ", // Tie body
+                "                 "
+            ],
+             // Z = 0: Head base, neck, jacket front
+            [
+                "                 ",
+                "                 ",
+                "      HHHHH      ",
+                "     HHHHHHH     ",
+                "    HHHHHHHHH    ",
+                "    HSSSSSSSH    ",
+                "    HSSSSSSSH    ",
+                "    HSSSSSSSH    ",
+                "    HSSSSSSSH    ",
+                "     HSSSSS      ", // Jawline tapering
+                "      HSSS       ", // Neck
+                "     J  C  J     ", // Jacket collar over neck
+                "    JJ  W  JJ    ", // Jacket opening
+                "   JJJ  W  JJJ   ",
+                "   JJJJ W JJJJ   ",
+                "   JJJJ T JJJJ   ",
+                "   JJJJJJJJJJJ   "
+            ],
+            // Z = -1: Mid-depth hair volume, shoulders
+            [
+                "                 ",
+                "      HHHHH      ",
+                "     HHHHHHH     ",
+                "    HHHHHHHHH    ",
+                "   HHHHHHHHHHH   ",
+                "   H         H   ",
+                "   H         H   ",
+                "   H         H   ",
+                "   H         H   ",
+                "   H         H   ",
+                "   H         H   ",
+                "   J         J   ",
+                "  JJJ       JJJ  ",
+                " JJJJJ     JJJJJ ",
+                " JJJJJJJJJJJJJJJ ",
+                " JJJJJJJJJJJJJJJ ",
+                " JJJJJJJJJJJJJJJ "
+            ],
+            // Z = -2: Long flowing back hair
+            [
+                "                 ",
+                "      DDDDD      ",
+                "     DDDDDDD     ",
+                "    DDDDDDDDD    ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   ",
+                "   DDDDDDDDDDD   "
+            ]
+        ];
+
+        // --- Setup Scene ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        // Add a very subtle fog to blend into background
+        scene.fog = new THREE.FogExp2(0x2a2422, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.6, 28);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // optimize for high DPI
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.8;
+        controls.maxPolarAngle = Math.PI / 2 + 0.2; // Don't let camera go too far below
+        controls.minDistance = 15;
+        controls.maxDistance = 50;
+
+        // --- Lighting ---
+        // Ambient fill
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        // Main warm key light (from top front left)
+        const dirLight = new THREE.DirectionalLight(0xfff0dd, 1.5);
+        dirLight.position.set(-10, 15, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.bias = -0.001;
+        scene.add(dirLight);
+
+        // Cool rim light (from back right) for volume
+        const rimLight = new THREE.DirectionalLight(0xaaeeff, 0.8);
+        rimLight.position.set(10, 5, -10);
+        scene.add(rimLight);
+
+        // --- Voxel Generation Logic ---
+        
+        // Count total blocks to initialize InstancedMesh efficiently
+        let totalBlocks = 0;
+        voxelLayers.forEach(layer => {
+            layer.forEach(row => {
+                for (let i = 0; i < row.length; i++) {
+                    if (row[i] !== ' ') totalBlocks++;
+                }
+            });
+        });
+
+        // Use a standard box. Beveling is nice but InstancedMesh with standard boxes is cleaner for pure pixel-art style.
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        // Material with slight roughness to look solid, not plastic
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, 
+            roughness: 0.8,
+            metalness: 0.1
+        });
+
+        const instancedMesh = new THREE.InstancedMesh(geometry, material, totalBlocks);
+        instancedMesh.castShadow = true;
+        instancedMesh.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const colorObj = new THREE.Color();
+        let instanceIndex = 0;
+
+        const gridWidth = voxelLayers[0][0].length;
+        const gridHeight = voxelLayers[0].length;
+        
+        // Center offsets
+        const offsetX = gridWidth / 2 - 0.5;
+        const offsetY = gridHeight / 2 - 0.5;
+
+        // Build the mesh
+        for (let z = 0; z < voxelLayers.length; z++) {
+            const layer = voxelLayers[z];
+            for (let y = 0; y < layer.length; y++) {
+                const row = layer[y];
+                for (let x = 0; x < row.length; x++) {
+                    const char = row[x];
+                    if (char !== ' ' && colors[char] !== undefined) {
+                        
+                        // Map array coordinates to 3D space
+                        // Z layers: 0 is frontmost, higher index goes backwards
+                        dummy.position.set(
+                            x - offsetX, 
+                            -(y - offsetY), // Invert Y so array draws top-to-bottom visually
+                            (2 - z)         // Front layers have positive Z
+                        );
+                        dummy.updateMatrix();
+                        
+                        instancedMesh.setMatrixAt(instanceIndex, dummy.matrix);
+                        colorObj.setHex(colors[char]);
+                        instancedMesh.setColorAt(instanceIndex, colorObj);
+                        
+                        instanceIndex++;
+                    }
+                }
+            }
+        }
+
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        instancedMesh.instanceColor.needsUpdate = true;
+        
+        // Group to hold the mesh for easy global animation
+        const voxelGroup = new THREE.Group();
+        voxelGroup.add(instancedMesh);
+        scene.add(voxelGroup);
+
+        // Remove loading text
+        document.getElementById('loading').style.opacity = '0';
+        setTimeout(() => document.getElementById('loading').remove(), 500);
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsedTime = clock.getElapsedTime();
+
+            // Gentle floating animation
+            voxelGroup.position.y = Math.sin(elapsedTime * 1.5) * 0.3;
+            
+            // Subtle breathing/scaling effect
+            const scale = 1 + Math.sin(elapsedTime * 3) * 0.005;
+            voxelGroup.scale.set(scale, scale, scale);
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation loop
+        animate();
+    </script>
+</body>
+</html>

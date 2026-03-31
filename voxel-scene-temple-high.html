@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Japanese Garden</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB; /* Sky color */
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: sans-serif;
+            color: white;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+    </style>
+    <!-- Import map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="loading">Generating World...</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Scene Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.008); // Distant fog
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+        // Position camera to mimic the image's high-angle view
+        camera.position.set(-48, 40, 48);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(10, 0, -10); // Look towards pagoda area
+        controls.update();
+        controls.enableDamping = true;
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(50, 80, 20);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.left = -60;
+        dirLight.shadow.camera.right = 60;
+        dirLight.shadow.camera.top = 60;
+        dirLight.shadow.camera.bottom = -60;
+        dirLight.shadow.camera.near = 0.1;
+        dirLight.shadow.camera.far = 200;
+        dirLight.shadow.bias = -0.001;
+        scene.add(dirLight);
+
+        // --- Voxel Engine Setup ---
+        // Color palette inspired by the image
+        const colors = {
+            grassLight: 0x5a9e38,
+            grassDark: 0x427526,
+            path: 0xe0e0e0,
+            water: 0x2c4c3b, // Dark murky green/blue
+            waterEdge: 0x3d5a45,
+            pagodaRed: 0xb52216,
+            pagodaRoof: 0x2a2e30,
+            pagodaWhite: 0xf0f0f0,
+            pagodaGold: 0xdeb841,
+            pineLeaves: 0x1f451a,
+            pineTrunk: 0x3d2817,
+            bushLeaves: 0x6bb342
+        };
+
+        const materials = {};
+        for (const key in colors) {
+            materials[key] = new THREE.MeshStandardMaterial({ 
+                color: colors[key], 
+                roughness: 0.9, 
+                flatShading: true 
+            });
+        }
+
+        const voxelGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const voxelData = {}; // Store array of {x,y,z} for each material
+        const heightMap = {}; // Keep track of highest ground voxel at x,z
+
+        function setHeight(x, z, y) {
+            const key = `${Math.floor(x)},${Math.floor(z)}`;
+            heightMap[key] = Math.max(heightMap[key] || -999, y);
+        }
+
+        function getHeight(x, z) {
+            const key = `${Math.floor(x)},${Math.floor(z)}`;
+            return heightMap[key] !== undefined ? heightMap[key] : 0;
+        }
+
+        function addVoxel(x, y, z, matKey) {
+            x = Math.floor(x); y = Math.floor(y); z = Math.floor(z);
+            if (!voxelData[matKey]) voxelData[matKey] = [];
+            voxelData[matKey].push({ x, y, z });
+            // Only update heightmap for ground/path/water elements
+            if (matKey.includes('grass') || matKey.includes('path') || matKey.includes('water')) {
+                setHeight(x, z, y);
+            }
+        }
+
+        // --- Procedural Generation Functions ---
+
+        // Helper for noise
+        function pseudoRandom(x, z) {
+            return Math.sin(x * 12.9898 + z * 78.233) * 43758.5453 % 1;
+        }
+
+        function generateTerrain() {
+            const size = 60;
+            for (let x = -size; x <= size; x++) {
+                for (let z = -size; z <= size; z++) {
+                    // Create base elevation with simple noise combination
+                    let elevation = Math.sin(x * 0.05) * Math.cos(z * 0.05) * 4;
+                    elevation += Math.sin(x * 0.1) * 2;
+                    elevation = Math.floor(elevation);
+
+                    // Flatten pond area (bottom left quadrant roughly)
+                    if (x < 5 && x > -40 && z > 5 && z < 40) {
+                        let pondDepth = -2;
+                        // Edge blending
+                        let distToEdge = Math.min(x - (-40), 5 - x, z - 5, 40 - z);
+                        if (distToEdge < 4) {
+                            elevation = Math.floor(pondDepth + (4 - distToEdge) * 0.5);
+                        } else {
+                            elevation = pondDepth;
+                        }
+
+                        if (elevation <= pondDepth) {
+                            addVoxel(x, elevation, z, 'water');
+                            continue; // Skip grass for water
+                        }
+                    }
+
+                    // Fill down to a base layer so we don't have floating shells
+                    for(let y = -4; y <= elevation; y++) {
+                        // Top layer gets variation
+                        if (y === elevation) {
+                             const r = pseudoRandom(x, z);
+                             addVoxel(x, y, z, r > 0.5 ? 'grassLight' : 'grassDark');
+                        } else {
+                             // Underground, just use dark grass to save instance count (won't be seen much)
+                             addVoxel(x, y, z, 'grassDark'); 
+                        }
+                    }
+                }
+            }
+        }
+
+        function generatePath() {
+            // Winding path through the garden
+            const pathPoints = [
+                {x: -40, z: -30}, {x: -30, z: -20}, {x: -25, z: -10}, 
+                {x: -15, z: 5}, {x: -5, z: 15}, {x: 5, z: 5},
+                {x: 10, z: -5}, {x: 20, z: -15}, {x: 35, z: -10}
+            ];
+
+            for (let i = 0; i < pathPoints.length - 1; i++) {
+                let p1 = pathPoints[i];
+                let p2 = pathPoints[i+1];
+                let steps = Math.max(Math.abs(p2.x - p1.x), Math.abs(p2.z - p1.z));
+                
+                for (let s = 0; s <= steps; s++) {
+                    let t = s / steps;
+                    // Add some noise to make it winding
+                    let nx = Math.sin(t * Math.PI) * 2;
+                    let x = Math.floor(p1.x + (p2.x - p1.x) * t + nx);
+                    let z = Math.floor(p1.z + (p2.z - p1.z) * t);
+                    
+                    let baseHeight = getHeight(x, z);
+                    
+                    // Draw a brush of path voxels
+                    for (let bx = -1; bx <= 2; bx++) {
+                        for (let bz = -1; bz <= 1; bz++) {
+                            // Check if distance is roughly within circle
+                            if(bx*bx + bz*bz <= 3) {
+                                let h = getHeight(x+bx, z+bz);
+                                // Overwrite top voxel with path
+                                addVoxel(x + bx, h, z + bz, 'path');
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function buildPagoda(startX, startZ) {
+            let y = getHeight(startX, startZ) + 1;
+            
+            // Stone Base Foundation
+            const baseW = 15;
+            for(let x = -baseW/2; x <= baseW/2; x++) {
+                for(let z = -baseW/2; z <= baseW/2; z++) {
+                    addVoxel(startX + x, y, startZ + z, 'pagodaWhite');
+                    addVoxel(startX + x, y+1, startZ + z, 'pagodaWhite');
+                }
+            }
+            y += 2;
+
+            // Small fence on base
+            for(let x = -baseW/2 + 1; x <= baseW/2 - 1; x++) {
+                addVoxel(startX + x, y, startZ - baseW/2 + 1, 'pagodaRed');
+                addVoxel(startX + x, y, startZ + baseW/2 - 1, 'pagodaRed');
+                addVoxel(startX - baseW/2 + 1, y, startZ + x, 'pagodaRed');
+                addVoxel(startX + baseW/2 - 1, y, startZ + x, 'pagodaRed');
+            }
+
+            // Tiers
+            let width = 9;
+            const tiers = 5;
+            for (let t = 0; t < tiers; t++) {
+                // Walls
+                let wallH = 3;
+                for (let wy = 0; wy < wallH; wy++) {
+                    for (let x = -Math.floor(width/2); x <= Math.floor(width/2); x++) {
+                        for (let z = -Math.floor(width/2); z <= Math.floor(width/2); z++) {
+                            // Hollow inside to save instances, only build shell
+                            if (Math.abs(x) === Math.floor(width/2) || Math.abs(z) === Math.floor(width/2)) {
+                                addVoxel(startX + x, y + wy, startZ + z, 'pagodaRed');
+                            }
+                        }
+                    }
+                }
+                y += wallH;
+
+                // Balcony/Trim
+                for (let x = -Math.floor(width/2)-1; x <= Math.floor(width/2)+1; x++) {
+                    for (let z = -Math.floor(width/2)-1; z <= Math.floor(width/2)+1; z++) {
+                        if (Math.abs(x) > Math.floor(width/2)-1 || Math.abs(z) > Math.floor(width/2)-1) {
+                            addVoxel(startX + x, y, startZ + z, 'pagodaWhite');
+                        }
+                    }
+                }
+                y += 1;
+
+                // Roof Structure
+                let roofW = width + 4;
+                // Layer 1 (Wide eaves)
+                for (let x = -Math.floor(roofW/2); x <= Math.floor(roofW/2); x++) {
+                    for (let z = -Math.floor(roofW/2); z <= Math.floor(roofW/2); z++) {
+                         addVoxel(startX + x, y, startZ + z, 'pagodaRoof');
+                    }
+                }
+                y += 1;
+                // Layer 2 (Sloping up)
+                roofW -= 2;
+                for (let x = -Math.floor(roofW/2); x <= Math.floor(roofW/2); x++) {
+                    for (let z = -Math.floor(roofW/2); z <= Math.floor(roofW/2); z++) {
+                         addVoxel(startX + x, y, startZ + z, 'pagodaRoof');
+                    }
+                }
+                y += 1;
+                // Layer 3 (Peak)
+                roofW -= 2;
+                for (let x = -Math.floor(roofW/2); x <= Math.floor(roofW/2); x++) {
+                    for (let z = -Math.floor(roofW/2); z <= Math.floor(roofW/2); z++) {
+                         addVoxel(startX + x, y, startZ + z, 'pagodaRoof');
+                    }
+                }
+                y += 1;
+
+                width -= 1; // Slight taper
+            }
+
+            // Finial (Spire)
+            for (let i = 0; i < 8; i++) {
+                // Main pole
+                addVoxel(startX, y + i, startZ, 'pagodaGold');
+                // Rings
+                if (i > 1 && i < 6 && i%2!==0) {
+                     addVoxel(startX+1, y + i, startZ, 'pagodaGold');
+                     addVoxel(startX-1, y + i, startZ, 'pagodaGold');
+                     addVoxel(startX, y + i, startZ+1, 'pagodaGold');
+                     addVoxel(startX, y + i, startZ-1, 'pagodaGold');
+                }
+            }
+        }
+
+        function buildPineTree(cx, cz, scale = 1) {
+            let y = getHeight(cx, cz) + 1;
+            if(y < 0) return; // Don't build in water
+
+            let trunkH = Math.floor(3 * scale);
+            for(let i=0; i<trunkH; i++) addVoxel(cx, y+i, cz, 'pineTrunk');
+            y += trunkH - 1;
+
+            let layers = Math.floor(6 * scale);
+            let w = Math.floor(5 * scale);
+            
+            for(let l=0; l<layers; l++) {
+                for(let x=-w; x<=w; x++) {
+                    for(let z=-w; z<=w; z++) {
+                        // Diamond shape
+                        if(Math.abs(x) + Math.abs(z) <= w) {
+                            // Occasional gaps for organic look
+                            if(pseudoRandom(cx+x, cz+z+y) > 0.1) {
+                                addVoxel(cx+x, y, cz+z, 'pineLeaves');
+                            }
+                        }
+                    }
+                }
+                y++;
+                if(l%2 === 0 && w > 0) w--; // Shrink width every other layer
+            }
+            // Top point
+            addVoxel(cx, y, cz, 'pineLeaves');
+        }
+
+        function buildBush(cx, cz, radius) {
+            let y = getHeight(cx, cz) + 1;
+            if(y < 0) return;
+            
+            for(let x=-radius; x<=radius; x++) {
+                for(let iy=0; iy<=radius*1.5; iy++) {
+                    for(let z=-radius; z<=radius; z++) {
+                        // Sphere-ish shape distance check
+                        if (x*x + (iy-radius/2)*(iy-radius/2) + z*z <= radius*radius) {
+                             if(pseudoRandom(cx+x, y+iy) > 0.15) { // Add noise
+                                addVoxel(cx+x, y+iy, cz+z, 'bushLeaves');
+                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        function populateVegetation() {
+            const size = 55;
+            for(let i=0; i<300; i++) {
+                let x = Math.floor((Math.random() - 0.5) * size * 2);
+                let z = Math.floor((Math.random() - 0.5) * size * 2);
+                
+                // Keep away from pagoda center
+                if(x > 10 && x < 35 && z > -25 && z < 0) continue;
+                
+                // Check if path or water
+                let h = getHeight(x,z);
+                let isWater = h <= -2;
+                
+                if(!isWater) {
+                    let r = Math.random();
+                    if(r < 0.6) {
+                        // Pines mostly in background and edges
+                        let scale = 0.8 + Math.random() * 0.7;
+                        buildPineTree(x, z, scale);
+                    } else {
+                        // Bushes scattered
+                        let rad = 2 + Math.floor(Math.random() * 3);
+                        buildBush(x, z, rad);
+                    }
+                }
+            }
+
+            // Cluster specific trees to match image feel
+            // Behind pagoda
+            for(let i=0; i<15; i++) buildPineTree(25 + Math.random()*20, -15 - Math.random()*20, 1.2);
+            // Left side dense pines
+            for(let i=0; i<20; i++) buildPineTree(-30 - Math.random()*20, 0 + Math.random()*30, 1.5);
+            // Bushes near path
+            buildBush(-20, -5, 3);
+            buildBush(-10, 8, 4);
+            buildBush(0, -10, 3);
+        }
+
+        // --- Build Sequence ---
+        console.log("Starting generation...");
+        generateTerrain();
+        generatePath();
+        buildPagoda(22, -12); // Position based on camera
+        populateVegetation();
+
+        // --- Render Meshes ---
+        const dummy = new THREE.Object3D();
+        let totalVoxels = 0;
+
+        for (const matKey in voxelData) {
+            const positions = voxelData[matKey];
+            const count = positions.length;
+            if (count === 0) continue;
+            totalVoxels += count;
+
+            const instancedMesh = new THREE.InstancedMesh(voxelGeometry, materials[matKey], count);
+            instancedMesh.castShadow = true;
+            instancedMesh.receiveShadow = true;
+
+            for (let i = 0; i < count; i++) {
+                const pos = positions[i];
+                dummy.position.set(pos.x, pos.y, pos.z);
+                dummy.updateMatrix();
+                instancedMesh.setMatrixAt(i, dummy.matrix);
+            }
+            
+            // Optimization: Update bounds for culling
+            instancedMesh.instanceMatrix.needsUpdate = true;
+            instancedMesh.computeBoundingSphere();
+            
+            scene.add(instancedMesh);
+        }
+        
+        console.log(`World generated with ${totalVoxels} voxels.`);
+        document.getElementById('loading').style.display = 'none';
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        animate();
+
+    </script>
+</body>
+</html>

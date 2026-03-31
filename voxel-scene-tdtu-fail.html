@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TDT Voxel Art Scene</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #e0e8f0 0%, #ffffff 100%);
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #005bb5;
+            font-weight: bold;
+            font-size: 1.2rem;
+            pointer-events: none;
+            transition: opacity 0.5s ease;
+        }
+    </style>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">Generating Voxel Scene...</div>
+    <!-- Include Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Include OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- Initialization ---
+        const scene = new THREE.Scene();
+        // Soft fog to blend with the background gradient
+        scene.fog = new THREE.FogExp2(0xf0f4f8, 0.005);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // Position camera to look at the logo from an isometric-like angle
+        camera.position.set(32, 32, 48);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 1.0;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't go below ground
+        controls.minDistance = 20;
+        controls.maxDistance = 150;
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xfff5e6, 0.8); // Warm sun light
+        dirLight.position.set(50, 60, 40);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.near = 0.5;
+        dirLight.shadow.camera.far = 150;
+        const d = 40;
+        dirLight.shadow.camera.left = -d;
+        dirLight.shadow.camera.right = d;
+        dirLight.shadow.camera.top = d;
+        dirLight.shadow.camera.bottom = -d;
+        scene.add(dirLight);
+
+        const backLight = new THREE.DirectionalLight(0xcce5ff, 0.4); // Cool rim light
+        backLight.position.set(-40, 30, -40);
+        scene.add(backLight);
+
+        // --- Environment ---
+        // Floor
+        const floorGeo = new THREE.PlaneGeometry(500, 500);
+        const floorMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, 
+            roughness: 0.1, 
+            metalness: 0.1 
+        });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -10;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // Grid Helper for aesthetic
+        const gridHelper = new THREE.GridHelper(200, 100, 0x000000, 0x000000);
+        gridHelper.material.opacity = 0.05;
+        gridHelper.material.transparent = true;
+        gridHelper.position.y = -9.9;
+        scene.add(gridHelper);
+
+        // --- Voxel Logo Generation ---
+        const logoGroup = new THREE.Group();
+        scene.add(logoGroup);
+
+        // Colors extracted from the logo, made slightly more vibrant for 3D
+        const colorBlue = 0x005bb5; 
+        const colorRed = 0xe23d28;
+
+        const voxelSize = 1;
+        const gap = 0.06; // Gives that distinct "block" look
+        const boxGeo = new THREE.BoxGeometry(voxelSize - gap, voxelSize - gap, voxelSize - gap);
+        
+        // Materials with a slight bevel/smoothness illusion via roughness
+        const matBlue = new THREE.MeshStandardMaterial({ color: colorBlue, roughness: 0.2, metalness: 0.1 });
+        const matRed = new THREE.MeshStandardMaterial({ color: colorRed, roughness: 0.2, metalness: 0.1 });
+
+        // A stylistic 2D text map representing the logo's geometry with a baked-in slant
+        const voxelMap = [
+            "                                                            BBBBBBBBBBBBBBB",
+            "                                                           BBBBBBBBBBBBBBB ",
+            "                                                          BBBBBBBBBBBBBBB  ",
+            "                                                         BBBBBBBBBBBBBBB   ",
+            "                                                                BBBBBB     ",
+            "                                                               BBBBBB      ",
+            "                                                              BBBBBB       ",
+            "                                                             BBBBBB        ",
+            "                                         RRRRRRRRRRRRRRR    BBBBBB         ",
+            "                                        RRRRRRRRRRRRRRR    BBBBBB          ",
+            "                                       RRRRRRRRRRRRRRR    BBBBBB           ",
+            "                                      RRRRRR    RRRRR    BBBBBB            ",
+            "             BBBBBBBBBBBBBBB         RRRRRR    RRRRR    BBBBBB             ",
+            "            BBBBBBBBBBBBBBB         RRRRRR    RRRRR                        ",
+            "           BBBBBBBBBBBBBBB         RRRRRR    RRRRR                         ",
+            "          BBBBBBBBBBBBBBB         RRRRRRRRRRRRRRRR                         ",
+            "                 BBBBBB          RRRRRRRRRRRRRRRR                          ",
+            "                BBBBBB          RRRRRRRRRRRRRRRR                           ",
+            "               BBBBBB          RRRRRRRRRRRRRRRR                            ",
+            "              BBBBBB                                                       ",
+            "             BBBBBB                                                        ",
+            "            BBBBBB                                                         ",
+            "           BBBBBB                                                          "
+        ];
+
+        const depth = 6; // Number of voxels deep
+
+        // Process the text map and build the 3D grid
+        for (let y = 0; y < voxelMap.length; y++) {
+            const row = voxelMap[y];
+            for (let x = 0; x < row.length; x++) {
+                const char = row[x];
+                if (char === 'B' || char === 'R') {
+                    for (let z = 0; z < depth; z++) {
+                        const material = char === 'B' ? matBlue : matRed;
+                        const voxel = new THREE.Mesh(boxGeo, material);
+                        
+                        // Calculate position. Y is inverted because array index 0 is top.
+                        voxel.position.set(
+                            x, 
+                            -y, 
+                            z - depth / 2 // Center depth around Z=0
+                        );
+                        
+                        voxel.castShadow = true;
+                        voxel.receiveShadow = true;
+                        logoGroup.add(voxel);
+                    }
+                }
+            }
+        }
+
+        // Center the entire group
+        const box = new THREE.Box3().setFromObject(logoGroup);
+        const center = box.getCenter(new THREE.Vector3());
+        logoGroup.position.sub(center);
+        
+        // Base floating height
+        const baseHeight = 5;
+        logoGroup.position.y += baseHeight;
+
+        // Hide loading text once built
+        document.getElementById('loading').style.opacity = '0';
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsedTime = clock.getElapsedTime();
+
+            // Gentle floating animation
+            logoGroup.position.y = baseHeight + Math.sin(elapsedTime * 1.5) * 1.5;
+            
+            // Subtle tilt breathing
+            logoGroup.rotation.z = Math.sin(elapsedTime * 0.8) * 0.02;
+            logoGroup.rotation.x = Math.sin(elapsedTime * 1.2) * 0.02;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Window Resize Handler ---
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
