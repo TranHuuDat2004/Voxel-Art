@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Art - Anime Girl Inspiration</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            font-family: sans-serif;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.2rem;
+            color: #8abdf0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+    </style>
+    <!-- Import Three.js as ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">Generating Voxels...</div>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0xebedee, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 4, 20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 + 0.1; // Prevent going too far below ground
+        controls.minDistance = 10;
+        controls.maxDistance = 40;
+        controls.target.set(0, 2, 0);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xfffaed, 1.2); // Warm sunlight
+        dirLight.position.set(10, 15, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.camera.left = -15;
+        dirLight.shadow.camera.right = 15;
+        dirLight.shadow.camera.top = 15;
+        dirLight.shadow.camera.bottom = -15;
+        dirLight.shadow.bias = -0.001;
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0x8abdf0, 0.4); // Cool blue fill
+        fillLight.position.set(-10, 5, -10);
+        scene.add(fillLight);
+
+        // --- Environment ---
+        // Floor
+        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        const floorMat = new THREE.ShadowMaterial({ opacity: 0.15 });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -6;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // --- Voxel Generation Logic ---
+        const voxelGroup = new THREE.Group();
+        scene.add(voxelGroup);
+
+        // Color Palette
+        const C_HAIR = 0xc2524d;    // Miku's reddish-brown hair
+        const C_HAIR_HL = 0xde7b76; // Hair highlight
+        const C_SKIN = 0xffe6db;    // Pale peach skin
+        const C_BLUSH = 0xffaeb8;   // Blush
+        const C_EYE_D = 0x223594;   // Dark blue eye
+        const C_EYE_L = 0x5a7cf0;   // Light blue eye
+        const C_WHITE = 0xffffff;   // Eye highlight / shirt
+        const C_CARD = 0x82c0f2;    // Light blue cardigan
+        const C_CARD_D = 0x6ba9db;  // Cardigan shadow
+        const C_HP_PAD = 0x1f2b47;  // Dark blue headphone pads
+        const C_HP_BAND = 0x3b6bad; // Mid blue headphone band
+
+        const voxelSize = 0.95; // Slight gap for the "blocky" aesthetic
+        const geometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+        
+        // Cache materials to improve performance
+        const materials = {};
+        function getMaterial(colorHex) {
+            if (!materials[colorHex]) {
+                materials[colorHex] = new THREE.MeshStandardMaterial({ 
+                    color: colorHex, 
+                    roughness: 0.7, 
+                    metalness: 0.05 
+                });
+            }
+            return materials[colorHex];
+        }
+
+        const voxelMap = new Map();
+        function addVoxel(x, y, z, color) {
+            voxelMap.set(`${x},${y},${z}`, color);
+        }
+
+        function fill(x1, x2, y1, y2, z1, z2, color) {
+            for (let x = x1; x <= x2; x++) {
+                for (let y = y1; y <= y2; y++) {
+                    for (let z = z1; z <= z2; z++) {
+                        addVoxel(x, y, z, color);
+                    }
+                }
+            }
+        }
+
+        // --- Constructing the Character ---
+        
+        // 1. Base Head (Skin)
+        fill(-3, 3, 0, 5, -2, 2, C_SKIN);
+
+        // 2. Body / Cardigan
+        fill(-4, 4, -5, -1, -2, 1, C_CARD);
+        fill(-2, 2, -2, -1, 2, 2, C_WHITE); // Shirt collar area
+        
+        // Cardigan sleeves / arms brought up to cheeks
+        fill(-5, -4, -4, -1, -1, 2, C_CARD);
+        fill(4, 5, -4, -1, -1, 2, C_CARD);
+        fill(-5, -4, 0, 1, 2, 3, C_CARD); // Sleeve rising
+        fill(4, 5, 0, 1, 2, 3, C_CARD);
+        
+        // Hands holding headphones near cheeks
+        fill(-4, -3, 1, 2, 3, 4, C_SKIN);
+        fill(3, 4, 1, 2, 3, 4, C_SKIN);
+
+        // 3. Hair Base
+        fill(-4, 4, 5, 7, -3, 2, C_HAIR); // Top
+        fill(-4, 4, 1, 4, -3, -1, C_HAIR); // Back
+        fill(-5, -4, -4, 4, -2, 1, C_HAIR); // Left side long hair
+        fill(4, 5, -4, 4, -2, 1, C_HAIR); // Right side long hair
+        
+        // Hair Bangs
+        fill(-4, 4, 4, 5, 3, 3, C_HAIR); // Forehead coverage
+        addVoxel(0, 3, 3, C_HAIR); // Center bang
+        addVoxel(-2, 3, 3, C_HAIR); // Side bang
+        addVoxel(2, 3, 3, C_HAIR);
+        
+        // Hair Highlights
+        fill(-3, 3, 6, 6, 2, 2, C_HAIR_HL); // Top crown highlight
+
+        // 4. Face Details (Overwrite skin blocks on Z=2)
+        // Blush
+        addVoxel(-2, 1, 2, C_BLUSH); addVoxel(-3, 1, 2, C_BLUSH);
+        addVoxel(2, 1, 2, C_BLUSH);  addVoxel(3, 1, 2, C_BLUSH);
+        
+        // Left Eye
+        addVoxel(-2, 2, 2, C_EYE_D); addVoxel(-1, 2, 2, C_EYE_D);
+        addVoxel(-2, 3, 2, C_EYE_L); addVoxel(-1, 3, 2, C_WHITE);
+        
+        // Right Eye
+        addVoxel(1, 2, 2, C_EYE_D); addVoxel(2, 2, 2, C_EYE_D);
+        addVoxel(1, 3, 2, C_WHITE); addVoxel(2, 3, 2, C_EYE_L);
+
+        // Mouth (small pout)
+        addVoxel(0, 0, 2, C_HAIR); // Using hair color as a dark line for mouth
+
+        // 5. Headphones (Around neck)
+        // Band
+        fill(-3, 3, -1, -1, 3, 3, C_HP_BAND);
+        fill(-3, -3, -2, -1, 2, 3, C_HP_BAND);
+        fill(3, 3, -2, -1, 2, 3, C_HP_BAND);
+        // Pads
+        fill(-4, -3, -3, -1, 1, 3, C_HP_PAD);
+        fill(3, 4, -3, -1, 1, 3, C_HP_PAD);
+
+        // --- Render the Voxels ---
+        // Convert map to meshes
+        for (let [coords, color] of voxelMap.entries()) {
+            const [x, y, z] = coords.split(',').map(Number);
+            const mesh = new THREE.Mesh(geometry, getMaterial(color));
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            voxelGroup.add(mesh);
+        }
+
+        // Center the whole group
+        const box = new THREE.Box3().setFromObject(voxelGroup);
+        const center = box.getCenter(new THREE.Vector3());
+        voxelGroup.position.sub(center);
+        voxelGroup.position.y += 1; // Lift slightly above floor
+
+        // Remove loading text
+        document.getElementById('loading').style.opacity = '0';
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const elapsedTime = clock.getElapsedTime();
+
+            // Gentle floating breathing animation
+            voxelGroup.position.y = (-center.y + 1) + Math.sin(elapsedTime * 2) * 0.15;
+            
+            // Slow auto-rotation for presentation (stops if user interacts)
+            if(!controls.state && !controls.active) {
+               voxelGroup.rotation.y = Math.sin(elapsedTime * 0.5) * 0.3;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Resize Handler ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>

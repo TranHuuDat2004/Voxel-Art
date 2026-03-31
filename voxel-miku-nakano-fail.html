@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Miku Nakano - 3D Character</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: radial-gradient(circle, #f9ebff 0%, #e8faff 100%); }
+        canvas { display: block; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #6a88e6; font-size: 20px; font-weight: bold;
+            text-shadow: 1px 1px 0px white;
+            pointer-events: none;
+        }
+        #ui {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            font-family: sans-serif; color: #555; background: rgba(255,255,255,0.7);
+            padding: 10px 20px; border-radius: 20px; backdrop-filter: blur(5px);
+            pointer-events: none; border: 1px solid rgba(255,255,255,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Summoning Miku...</div>
+    <div id="ui">Drag to Rotate • Scroll to Zoom</div>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Configuration ---
+        const VOXEL_SIZE = 1;
+        
+        const PALETTE = {
+            HAIR: 0x9e4a3d,      // Warm reddish-brown
+            HAIR_LIGHT: 0xba5a4d,
+            HAIR_DARK: 0x7a3a2d,
+            SKIN: 0xffdbac,      // Light peach
+            SKIN_SHADOW: 0xf1c27d,
+            EYE_WHITE: 0xffffff,
+            EYE_BLUE: 0x2d4d8c,   // Indigo/Dark blue
+            EYE_PUPIL: 0x1a2a4d,
+            CARDIGAN: 0xa8dbe9,  // Signature light blue
+            CARDIGAN_DARK: 0x8abccb,
+            SHIRT: 0xffffff,
+            HEADPHONES: 0x2a5eb2, // Blue
+            HEADPHONES_BLACK: 0x1a1a1a,
+            BLUSH: 0xff9999,
+            PLATFORM: 0xffffff
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = null; // Transparent for CSS gradient
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(40, 30, 40);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 15, 0); // Focus on middle of character
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        sunLight.position.set(20, 40, 30);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 1024;
+        sunLight.shadow.mapSize.height = 1024;
+        scene.add(sunLight);
+
+        const fillLight = new THREE.DirectionalLight(0xddeeff, 0.5);
+        fillLight.position.set(-20, 20, -10);
+        scene.add(fillLight);
+
+        // --- Voxel Modeling ---
+        const voxels = [];
+
+        function addVoxel(x, y, z, color) {
+            voxels.push({ x, y, z, color });
+        }
+
+        function drawBox(x1, y1, z1, x2, y2, z2, color) {
+            for (let x = x1; x <= x2; x++) {
+                for (let y = y1; y <= y2; y++) {
+                    for (let z = z1; z <= z2; z++) {
+                        addVoxel(x, y, z, color);
+                    }
+                }
+            }
+        }
+
+        // 1. Pedestal/Platform
+        for (let x = -15; x <= 15; x++) {
+            for (let z = -15; z <= 15; z++) {
+                if (x*x + z*z <= 12*12) {
+                    addVoxel(x, -1, z, PALETTE.PLATFORM);
+                }
+            }
+        }
+
+        // 2. Torso (Cardigan & Shirt)
+        // Main mass
+        drawBox(-4, 0, -2, 4, 18, 2, PALETTE.CARDIGAN);
+        // Shirt opening (V-neck)
+        for (let y = 0; y <= 18; y++) {
+            const width = (y > 12) ? Math.floor((y - 12) / 2) : 0;
+            for (let x = -width; x <= width; x++) {
+                addVoxel(x, y, 2, PALETTE.SHIRT);
+                if (y > 14) addVoxel(x, y, 1, PALETTE.SHIRT);
+            }
+        }
+        // Tie/Ribbon (simplified)
+        drawBox(0, 14, 3, 0, 15, 3, 0x4a6eb2);
+
+        // 3. Arms (Posed near face)
+        // Left arm
+        drawBox(-6, 8, -1, -5, 18, 1, PALETTE.CARDIGAN); // Upper
+        drawBox(-7, 18, 1, -5, 23, 2, PALETTE.CARDIGAN); // Forearm up
+        drawBox(-6, 23, 2, -4, 25, 3, PALETTE.SKIN); // Hand
+        
+        // Right arm
+        drawBox(5, 8, -1, 6, 18, 1, PALETTE.CARDIGAN); // Upper
+        drawBox(5, 18, 1, 7, 23, 2, PALETTE.CARDIGAN); // Forearm up
+        drawBox(4, 23, 2, 6, 25, 3, PALETTE.SKIN); // Hand
+
+        // 4. Head
+        // Skin base
+        drawBox(-4, 19, -4, 4, 28, 3, PALETTE.SKIN);
+        
+        // Face Features
+        // Left eye (looking forward)
+        drawBox(-3, 23, 4, -1, 26, 4, PALETTE.EYE_BLUE);
+        addVoxel(-2, 24, 4, PALETTE.EYE_PUPIL);
+        addVoxel(-1, 25, 4.1, 0xffffff); // Glint
+        
+        // Right eye (partially hidden by hair later)
+        drawBox(1, 23, 4, 3, 26, 4, PALETTE.EYE_BLUE);
+        addVoxel(2, 24, 4, PALETTE.EYE_PUPIL);
+        
+        // Blush
+        addVoxel(-3, 22, 4, PALETTE.BLUSH);
+        addVoxel(-2, 22, 4, PALETTE.BLUSH);
+        addVoxel(2, 22, 4, PALETTE.BLUSH);
+        addVoxel(3, 22, 4, PALETTE.BLUSH);
+
+        // 5. Hair (The tricky part)
+        // Top and Back
+        drawBox(-5, 29, -5, 5, 30, 4, PALETTE.HAIR); // Top shell
+        drawBox(-5, 20, -5, 5, 28, -5, PALETTE.HAIR); // Back shell
+        
+        // Long hair back
+        drawBox(-5, 5, -5, 5, 19, -5, PALETTE.HAIR_DARK);
+        
+        // Side bangs (asymmetrical)
+        // Left side long strand
+        drawBox(-5, 15, -1, -5, 28, 4, PALETTE.HAIR);
+        // Right side (covers eye)
+        drawBox(1, 25, 5, 4, 28, 5, PALETTE.HAIR); // Forehead bang
+        drawBox(0, 21, 5, 2, 26, 5, PALETTE.HAIR); // The signature strand covering eye
+        drawBox(5, 15, -1, 5, 28, 4, PALETTE.HAIR); // Right side mass
+
+        // 6. Headphones
+        // The neck band
+        for (let x = -6; x <= 6; x++) {
+            const z = (x*x / 8) - 4;
+            addVoxel(x, 18, z, PALETTE.HEADPHONES);
+            addVoxel(x, 19, z, PALETTE.HEADPHONES);
+        }
+        // The side cups (hanging around neck)
+        // Left cup
+        drawBox(-7, 15, -2, -6, 19, 2, PALETTE.HEADPHONES_BLACK);
+        drawBox(-8, 16, -1, -7, 18, 1, PALETTE.HEADPHONES);
+        // Right cup
+        drawBox(6, 15, -2, 7, 19, 2, PALETTE.HEADPHONES_BLACK);
+        drawBox(7, 16, -1, 8, 18, 1, PALETTE.HEADPHONES);
+
+        // --- Render Voxels ---
+        const geometry = new THREE.BoxGeometry(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE);
+        const material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6 });
+        
+        const mesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+
+        voxels.forEach((v, i) => {
+            dummy.position.set(v.x, v.y, v.z);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+            mesh.setColorAt(i, color.setHex(v.color));
+        });
+
+        scene.add(mesh);
+        document.getElementById('loading').style.display = 'none';
+
+        // --- Sparkle Particles ---
+        const particleCount = 100;
+        const partGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+        const partMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+        const particles = new THREE.InstancedMesh(partGeo, partMat, particleCount);
+        scene.add(particles);
+
+        const particleData = [];
+        for (let i = 0; i < particleCount; i++) {
+            particleData.push({
+                x: (Math.random() - 0.5) * 40,
+                y: Math.random() * 40,
+                z: (Math.random() - 0.5) * 40,
+                speed: 0.05 + Math.random() * 0.1,
+                offset: Math.random() * 100
+            });
+        }
+
+        // --- Animation ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            controls.update();
+            
+            // Auto rotation group
+            mesh.rotation.y = time * 0.2;
+            
+            // Animate particles
+            particleData.forEach((p, i) => {
+                p.y += p.speed;
+                if (p.y > 40) p.y = 0;
+                
+                const wobble = Math.sin(time + p.offset) * 2;
+                dummy.position.set(p.x + wobble, p.y, p.z);
+                dummy.rotation.set(time, time, time);
+                dummy.scale.setScalar(0.5 + Math.sin(time * 2 + p.offset) * 0.5);
+                dummy.updateMatrix();
+                particles.setMatrixAt(i, dummy.matrix);
+            });
+            particles.instanceMatrix.needsUpdate = true;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
