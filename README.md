@@ -2,7 +2,7 @@
 
 A beautiful 3D voxel art scene featuring a floating island with a cherry blossom tree, a waterfall, and falling petals. Built using **Three.js** and **InstancedMesh** for high performance.
 
-![Voxel Sakura Island](index.png)
+![Voxel Sakura Island](screenshot.png)
 
 ## ✨ Features
 - **Dynamic Waterfall**: Animated water particles flowing from the island.
