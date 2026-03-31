@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sunset Sea - 3D Art</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050510; }
+        canvas { display: block; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-family: 'Courier New', Courier, monospace; color: #ff8c00; font-size: 24px;
+            text-shadow: 0 0 10px #ff4500; pointer-events: none;
+        }
+        #controls-info {
+            position: absolute; bottom: 20px; width: 100%; text-align: center;
+            color: rgba(255, 140, 0, 0.6); font-family: sans-serif; font-size: 14px;
+            pointer-events: none; letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Painting the Sky...</div>
+    <div id="controls-info">DRAG TO ROTATE • SCROLL TO ZOOM</div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
+
+        // --- Config ---
+        const VOXEL_SIZE = 1;
+        const WORLD_HALF = 50;
+        
+        const PALETTE = {
+            SEA: 0x1e3a5a,        // Lighter blue
+            SEA_SHALLOW: 0x2a4a7a,
+            SUN: 0xffffee,        // Boiling white/yellow
+            SUN_ORANGE: 0xff9c33, // Brighter orange
+            SUN_SHINE: 0xffdd44,  // Brighter golden path
+            SKY_PURPLE: 0x6a2e82, 
+            SKY_ORANGE: 0xff6b33,
+            SKY_DARK: 0x0a0a1a,
+            ROCK: 0x444444,       // Lighter rock grey
+            ROCK_HIGHLIGHT: 0x888888,
+            CLOUD_ORANGE: 0xd4733d,
+            CLOUD_PURPLE: 0x7a4a8a
+        };
+
+        // --- Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(PALETTE.SKY_DARK);
+        // Reduced fog density and lightened correctly
+        scene.fog = new THREE.FogExp2(0x3a2a1a, 0.008);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(-60, 30, -60); // Low angle perspective
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.target.set(0, 5, 10);
+
+        // --- Lighting ---
+        // Increased ambient light for visibility
+        const ambientLight = new THREE.AmbientLight(0x555577, 1.5); 
+        scene.add(ambientLight);
+
+        // Brighter sun light
+        const sunLight = new THREE.DirectionalLight(0xffae42, 3.5);
+        sunLight.position.set(0, 10, 80);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        scene.add(sunLight);
+
+        // Horizon Bloom Light
+        const pointLight = new THREE.PointLight(0xff4500, 100, 150);
+        pointLight.position.set(0, 5, 60);
+        scene.add(pointLight);
+
+        // --- Voxel Logic ---
+        const voxels = [];
+        const simplex = new SimplexNoise();
+
+        function addVoxel(x, y, z, color) {
+            voxels.push({ x, y, z, color });
+        }
+
+        // 1. The Sea & Shimmering Path
+        for (let x = -WORLD_HALF; x <= WORLD_HALF; x++) {
+            for (let z = -WORLD_HALF; z <= WORLD_HALF; z++) {
+                // Ocean floor
+                let col = PALETTE.SEA;
+                
+                // Reflection path (z is positive towards sun)
+                const distFromPath = Math.abs(x);
+                if (distFromPath < 5 && z > 0) {
+                   // This is part of the light path
+                   // Handled in animation later for shimmering
+                   continue; // Skip static sea here
+                }
+                
+                addVoxel(x, 0, z, col);
+            }
+        }
+
+        // 2. The Coastline (Rocks)
+        // Foreground rocks in negative X, negative Z quadrant
+        for (let x = -WORLD_HALF; x <= -10; x++) {
+            for (let z = -WORLD_HALF; z <= 10; z++) {
+                // Noise for jaggedness
+                const n = simplex.noise(x * 0.1, z * 0.1);
+                const n2 = simplex.noise(x * 0.05, z * 0.05);
+                const height = Math.floor(Math.max(0, (n + n2 + 0.5) * 15));
+                
+                if (height > 0) {
+                    for (let y = 0; y <= height; y++) {
+                        let col = (Math.random() > 0.8) ? PALETTE.ROCK_HIGHLIGHT : PALETTE.ROCK;
+                        addVoxel(x, y, z, col);
+                    }
+                }
+            }
+        }
+
+        // 3. Clouds (Layered voxel masses)
+        function createCloud(cx, cy, cz, rx, ry, rz, color) {
+            for (let x = -rx; x <= rx; x++) {
+                for (let y = -ry; y <= ry; y++) {
+                    for (let z = -rz; z <= rz; z++) {
+                        if (x*x/(rx*rx) + y*y/(ry*ry) + z*z/(rz*rz) <= 1 + Math.random()*0.5) {
+                            if (Math.random() > 0.3) {
+                                addVoxel(cx+x, cy+y, cz+z, color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Background Clouds
+        for(let i=0; i<12; i++) {
+            const cx = (Math.random() - 0.5) * 100;
+            const cy = 20 + Math.random() * 20;
+            const cz = 30 + Math.random() * 50;
+            const col = (cy > 30) ? PALETTE.CLOUD_PURPLE : PALETTE.CLOUD_ORANGE;
+            createCloud(cx, cy, cz, 10 + Math.random()*15, 2, 5, col);
+        }
+
+        // 4. The Sun (Horizon disk)
+        for (let x = -6; x <= 6; x++) {
+            for (let y = -6; y <= 6; y++) {
+                if (x*x + y*y <= 6*6) {
+                    addVoxel(x, 5 + y, 65, PALETTE.SUN);
+                }
+            }
+        }
+
+        // --- Rendering Static Voxels ---
+        const geometry = new THREE.BoxGeometry(VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE);
+        const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
+        const instMesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+        instMesh.castShadow = true;
+        instMesh.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+
+        voxels.forEach((v, i) => {
+            dummy.position.set(v.x, v.y, v.z);
+            dummy.updateMatrix();
+            instMesh.setMatrixAt(i, dummy.matrix);
+            instMesh.setColorAt(i, color.setHex(v.color));
+        });
+
+        scene.add(instMesh);
+        document.getElementById('loading').style.display = 'none';
+
+        // --- Shimmering Reflection Logic ---
+        const reflectionCount = 250;
+        const reflMesh = new THREE.InstancedMesh(geometry, material, reflectionCount);
+        scene.add(reflMesh);
+
+        const reflectionData = [];
+        for (let i = 0; i < reflectionCount; i++) {
+            reflectionData.push({
+                x: (Math.random() - 0.5) * 10,
+                z: Math.random() * 60,
+                offset: Math.random() * 100,
+                speed: 0.2 + Math.random() * 0.3
+            });
+        }
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            controls.update();
+
+            // 1. Shimmer Reflection
+            reflectionData.forEach((p, i) => {
+                // Glow more near the sun (high z)
+                const shimmer = Math.sin(time * 5 + p.offset);
+                const yPos = (shimmer > 0) ? 0 : -1; // Hide under water bed
+                
+                dummy.position.set(p.x, yPos, p.z);
+                dummy.scale.setScalar(0.5 + Math.abs(shimmer) * 0.5);
+                dummy.updateMatrix();
+                reflMesh.setMatrixAt(i, dummy.matrix);
+                
+                // Color gets redder further from sun center
+                const dist = Math.abs(p.x) / 5;
+                const colHex = dist > 0.6 ? PALETTE.SUN_ORANGE : PALETTE.SUN_SHINE;
+                reflMesh.setColorAt(i, color.setHex(colHex));
+            });
+            reflMesh.instanceMatrix.needsUpdate = true;
+            reflMesh.instanceColor.needsUpdate = true;
+
+            // 2. Slow Cloud Motion
+            instMesh.position.x = Math.sin(time * 0.1) * 2;
+            
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sunset Cove</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-family: sans-serif;
+            font-size: 1.2rem;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+    </style>
+    <!-- Import Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">Generating Voxel World...</div>
+    <script>
+        // --- Initialization ---
+        const scene = new THREE.Scene();
+        
+        // Match the vibrant sunset sky from the image
+        const skyColor = new THREE.Color(0xd85b8c); 
+        scene.background = skyColor;
+        scene.fog = new THREE.FogExp2(skyColor, 0.015); // Hide world edges smoothly
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(0, 12, 28);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't go below ground
+        controls.target.set(0, 0, 0);
+
+        // --- Lighting ---
+        // Soft ambient fill light (purplish for the sunset shadows)
+        const ambientLight = new THREE.AmbientLight(0x4a2e5d, 0.8);
+        scene.add(ambientLight);
+
+        // Bright directional light representing the setting sun
+        const sunLight = new THREE.DirectionalLight(0xffb266, 1.2);
+        sunLight.position.set(0, 15, -40);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 0.5;
+        sunLight.shadow.camera.far = 100;
+        const d = 40;
+        sunLight.shadow.camera.left = -d;
+        sunLight.shadow.camera.right = d;
+        sunLight.shadow.camera.top = d;
+        sunLight.shadow.camera.bottom = -d;
+        scene.add(sunLight);
+
+        // --- Voxel Engine Setup ---
+        // Palette inspired by the image
+        const PALETTE = {
+            sand: 0xc49a97,       // Pinkish wet sand
+            sandDry: 0xa8827c,    // Darker dry sand/dirt
+            waterDeep: 0x8a4b6f,  // Reflecting the pink sky in the distance
+            waterMid: 0x5a8391,   // Teal transition
+            waterShallow: 0x6ca3a8,// Bright turquoise near shore
+            foam: 0xffffff,       // White crashing waves
+            hillDark: 0x142b15,   // Deep shadowed greens
+            hillLight: 0x1d4021,
+            rock: 0x3d2c2a,       // Dark foreground rocks
+            trunk: 0x3d2817,
+            leaves: 0x18381c,
+            sun: 0xffe6a0
+        };
+
+        // Dictionary to hold block positions per color
+        const blockData = {}; 
+        for (const key in PALETTE) blockData[PALETTE[key]] = [];
+
+        function addBlock(x, y, z, colorStr) {
+            const colorHex = PALETTE[colorStr];
+            if (blockData[colorHex]) {
+                blockData[colorHex].push(new THREE.Vector3(x, y, z));
+            }
+        }
+
+        // --- World Generation ---
+        const worldWidth = 80;
+        const worldDepth = 80;
+        const halfW = worldWidth / 2;
+        const halfD = worldDepth / 2;
+
+        // Generate Terrain
+        for (let x = -halfW; x < halfW; x++) {
+            for (let z = -halfD; z < halfD; z++) {
+                
+                // Base calculation for the cove shape
+                const distanceToCenter = Math.sqrt(x*x + z*z);
+                const isLeftEdge = x < -15;
+                const isRightEdge = x > 15;
+                
+                // Shoreline curve
+                const shoreZ = 5 + Math.cos(x * 0.15) * 8 + (Math.abs(x) * 0.2);
+
+                if (z > shoreZ) {
+                    // --- BEACH ---
+                    let height = 0;
+                    if (z > shoreZ + 5 && Math.random() > 0.7) height = 1;
+                    if (x < -20 || x > 20) height += Math.floor(Math.random() * 2); // Rise towards edges
+
+                    let type = (z > shoreZ + 8 && Math.random() > 0.5) ? 'sandDry' : 'sand';
+                    addBlock(x, height, z, type);
+                    
+                    // Fill underneath to avoid holes
+                    for(let y = height - 1; y >= -2; y--) addBlock(x, y, z, type);
+
+                } else {
+                    // --- WATER ---
+                    let wType = 'waterDeep';
+                    if (z > shoreZ - 5) wType = 'waterShallow';
+                    else if (z > shoreZ - 15) wType = 'waterMid';
+
+                    // Waves/Foam
+                    if (z > shoreZ - 3 && z <= shoreZ && Math.random() > 0.4) {
+                        wType = 'foam';
+                    } else if (z > shoreZ - 8 && z < shoreZ -4 && Math.random() > 0.85) {
+                        wType = 'foam';
+                        addBlock(x, 0.2, z, 'foam'); // slightly raised foam
+                    }
+
+                    addBlock(x, -0.5, z, wType);
+
+                    // --- HILLS (Cliffs flanking the cove) ---
+                    if (isLeftEdge || isRightEdge) {
+                        const edgeDist = Math.abs(x) - 15;
+                        const depthDist = Math.max(0, -z); // Higher further back
+                        
+                        let hillHeight = Math.floor((edgeDist * 0.8) + (depthDist * 0.3) + (Math.random() * 2));
+                        
+                        if (hillHeight > 0) {
+                            // Carve out a bit of the front of the cliffs
+                            if (z > 0 && Math.random() > 0.5) hillHeight = Math.floor(hillHeight/2);
+                            
+                            for (let y = 0; y <= hillHeight; y++) {
+                                let hType = Math.random() > 0.3 ? 'hillDark' : 'hillLight';
+                                if (y === 0 || y === 1) hType = 'rock'; // Rocky base
+                                addBlock(x, y, z, hType);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Palm Trees ---
+        function generatePalmTree(tx, ty, tz, height, leanX, leanZ) {
+            let currentX = tx;
+            let currentZ = tz;
+            
+            // Trunk
+            for (let y = 0; y < height; y++) {
+                addBlock(Math.floor(currentX), ty + y, Math.floor(currentZ), 'trunk');
+                currentX += leanX;
+                currentZ += leanZ;
+            }
+
+            const topY = ty + height;
+            const topX = Math.floor(currentX);
+            const topZ = Math.floor(currentZ);
+
+            // Leaves (Star pattern)
+            const leafOffsets = [
+                [1,0], [2,0], [3,-1],
+                [-1,0], [-2,0], [-3,-1],
+                [0,1], [0,2], [0,3],
+                [0,-1], [0,-2], [0,-3],
+                [1,1], [2,2],
+                [-1,-1], [-2,-2],
+                [1,-1], [2,-2],
+                [-1,1], [-2,2]
+            ];
+
+            addBlock(topX, topY, topZ, 'leaves');
+            leafOffsets.forEach(offset => {
+                let drop = Math.abs(offset[0]) > 1 || Math.abs(offset[1]) > 1 ? -1 : 0;
+                if (Math.abs(offset[0]) > 2 || Math.abs(offset[1]) > 2) drop = -2;
+                addBlock(topX + offset[0], topY + drop, topZ + offset[1], 'leaves');
+            });
+        }
+
+        // Plant trees on left and right foreground/midground
+        generatePalmTree(-22, 2, 10, 8, 0.2, 0);
+        generatePalmTree(-26, 3, 5, 10, 0.3, -0.1);
+        generatePalmTree(-18, 1, 20, 7, 0.15, -0.15);
+        generatePalmTree(-25, 4, -5, 9, 0.2, 0.2);
+
+        generatePalmTree(24, 2, 8, 9, -0.2, -0.1);
+        generatePalmTree(20, 1, 22, 6, -0.1, 0.1);
+        generatePalmTree(28, 4, -2, 10, -0.3, 0);
+
+        // Foreground rocks and foliage detail
+        for(let i=0; i<30; i++) {
+            let rx = (Math.random() - 0.5) * 60;
+            let rz = 20 + Math.random() * 15;
+            if (Math.abs(rx) > 15) {
+                addBlock(Math.floor(rx), 1, Math.floor(rz), 'hillDark');
+                addBlock(Math.floor(rx), 0, Math.floor(rz), 'rock');
+            }
+        }
+
+        // --- The Sun ---
+        // Voxel cluster in the far back
+        for (let sx = -3; sx <= 3; sx++) {
+            for (let sy = 2; sy <= 6; sy++) {
+                if (Math.sqrt(sx*sx + (sy-4)*(sy-4)) <= 2.5) {
+                    addBlock(sx, sy, -38, 'sun');
+                }
+            }
+        }
+
+
+        // --- Render Instanced Meshes ---
+        const voxelGeometry = new THREE.BoxGeometry(1, 1, 1);
+        const dummy = new THREE.Object3D();
+
+        for (const colorHexStr in blockData) {
+            const colorHex = parseInt(colorHexStr);
+            const positions = blockData[colorHex];
+            if (positions.length === 0) continue;
+
+            let material;
+            if (colorHex === PALETTE.sun) {
+                material = new THREE.MeshBasicMaterial({ color: colorHex }); // Sun doesn't need shadows
+            } else if (colorHex === PALETTE.waterShallow || colorHex === PALETTE.waterMid || colorHex === PALETTE.waterDeep) {
+                 material = new THREE.MeshStandardMaterial({ 
+                     color: colorHex, 
+                     roughness: 0.1, 
+                     metalness: 0.1 
+                });
+            } else {
+                material = new THREE.MeshStandardMaterial({ 
+                    color: colorHex, 
+                    roughness: 0.9, 
+                    flatShading: true 
+                });
+            }
+
+            const instancedMesh = new THREE.InstancedMesh(voxelGeometry, material, positions.length);
+            instancedMesh.castShadow = true;
+            instancedMesh.receiveShadow = true;
+
+            for (let i = 0; i < positions.length; i++) {
+                dummy.position.copy(positions[i]);
+                dummy.updateMatrix();
+                instancedMesh.setMatrixAt(i, dummy.matrix);
+            }
+            
+            scene.add(instancedMesh);
+        }
+
+        // Hide loading text
+        document.getElementById('loading').style.opacity = 0;
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // Very subtle camera floating effect for atmosphere
+            const elapsedTime = clock.getElapsedTime();
+            camera.position.y += Math.sin(elapsedTime * 0.5) * 0.005;
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Handle Resize ---
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        animate();
+    </script>
+</body>
+</html>

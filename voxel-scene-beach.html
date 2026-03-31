@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sunset Beach</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #ffc444; font-family: sans-serif; font-size: 24px; letter-spacing: 2px;
+            pointer-events: none; transition: opacity 0.5s;
+        }
+    </style>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">GENERATING WORLD...</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- Configuration & Palette ---
+        const CONFIG = {
+            width: 140,
+            depth: 160,
+            skyZ: -80,
+            sunX: 10,
+            sunY: 25
+        };
+
+        const PALETTE = {
+            skyTop: 0x2A1B38,     // Dark purple
+            skyMid: 0x8B4C70,     // Pinkish purple
+            skyLow: 0xFF7A33,     // Orange
+            sun: 0xFFEA70,        // Bright yellow/white
+            mountain: 0x1A1025,   // Very dark silhouette
+            waterDeep: 0x14556b,
+            waterShallow: 0x2a8b9e,
+            waterFoam: 0xd8e8e8,
+            waterReflect: 0xffaa44, // Sun reflection on water
+            sandDry: 0xc4a381,
+            sandWet: 0x8a6b53,
+            treeTrunk: 0x24150c,
+            treeLeafDark: 0x15240a,
+            treeLeafLight: 0x3a5c1e,
+            person: 0x111111
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(PALETTE.skyMid, 0.004); // Blend distant elements
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
+        // Position camera to look down the beach
+        camera.position.set(20, 9.600000000000001, 48);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.target.set(-10, 5, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't go below ground
+        controls.minDistance = 10;
+        controls.maxDistance = 120;
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0x403050, 0.6); // Soft purplish ambient
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffddaa, 1.2);
+        sunLight.position.set(CONFIG.sunX, CONFIG.sunY + 10, CONFIG.skyZ + 10);
+        sunLight.target.position.set(0, 0, 0);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 10;
+        sunLight.shadow.camera.far = 150;
+        sunLight.shadow.camera.left = -60;
+        sunLight.shadow.camera.right = 60;
+        sunLight.shadow.camera.top = 60;
+        sunLight.shadow.camera.bottom = -60;
+        sunLight.shadow.bias = -0.001;
+        scene.add(sunLight);
+        scene.add(sunLight.target);
+
+        // --- Procedural Generation Logic ---
+        const voxels = [];
+
+        function addVoxel(x, y, z, colorStr) {
+            voxels.push({ x: Math.round(x), y: Math.round(y), z: Math.round(z), color: colorStr });
+        }
+
+        // Noise function for organic shapes
+        function noise(x, z) {
+            return Math.sin(x * 0.1) * Math.cos(z * 0.1) * 2 + Math.sin(x * 0.03 + z * 0.05) * 4;
+        }
+
+        // 1. Build Sky Wall
+        for (let x = -CONFIG.width / 2; x <= CONFIG.width / 2; x++) {
+            for (let y = -5; y <= 45; y++) {
+                let color;
+                if (y < 8) color = PALETTE.skyLow;
+                else if (y < 25) color = PALETTE.skyMid;
+                else color = PALETTE.skyTop;
+                
+                // Add some dither/mix to sky transitions
+                if (Math.random() > 0.8) {
+                    if (y === 7 || y === 8) color = PALETTE.skyMid;
+                    if (y === 24 || y === 25) color = PALETTE.skyTop;
+                }
+
+                // Sun
+                const distToSun = Math.sqrt(Math.pow(x - CONFIG.sunX, 2) + Math.pow(y - CONFIG.sunY, 2));
+                if (distToSun < 6) color = PALETTE.sun;
+                else if (distToSun < 12 && Math.random() > 0.4) color = PALETTE.skyLow; // Glow
+
+                addVoxel(x, y, CONFIG.skyZ, color);
+            }
+        }
+
+        // 2. Build Mountains
+        for (let x = -CONFIG.width / 2; x <= CONFIG.width / 2; x++) {
+            // Mountains mainly on the right side
+            let mntHeight = Math.sin(x * 0.05) * 8 + Math.cos(x * 0.1) * 4 + 5;
+            if (x < 0) mntHeight *= 0.3; // Lower on the left
+            
+            mntHeight = Math.max(0, mntHeight);
+            for (let y = -2; y <= mntHeight; y++) {
+                addVoxel(x, y, CONFIG.skyZ + 5 + Math.random()*2, PALETTE.mountain);
+            }
+        }
+
+        // 3. Terrain (Beach and Water)
+        for (let x = -CONFIG.width / 2; x <= CONFIG.width / 2; x++) {
+            for (let z = CONFIG.skyZ + 10; z <= CONFIG.depth / 2; z++) {
+                // Shoreline curve equation
+                let shoreX = Math.sin(z * 0.04) * 12 + (z * 0.15) - 5;
+                
+                let n = noise(x, z);
+
+                if (x > shoreX) {
+                    // WATER
+                    let waterLevel = 0;
+                    let color = PALETTE.waterDeep;
+                    
+                    if (x - shoreX < 6) color = PALETTE.waterShallow;
+
+                    // Waves/Foam near shore
+                    if (x - shoreX < 2 + Math.random() * 2) {
+                        waterLevel = Math.random() > 0.5 ? 0.5 : 0;
+                        color = PALETTE.waterFoam;
+                    }
+
+                    // Sun reflection path
+                    if (Math.abs(x - CONFIG.sunX) < 4 + (z - CONFIG.skyZ)*0.05 && z < 20 && Math.random() > 0.4) {
+                         color = PALETTE.waterReflect;
+                    }
+
+                    // Small ocean waves
+                    if (Math.random() > 0.98 && x - shoreX > 10) waterLevel = 0.5;
+
+                    addVoxel(x, waterLevel, z, color);
+                    // Fill underneath to avoid light leaks
+                    addVoxel(x, waterLevel - 1, z, color);
+
+                } else {
+                    // SAND
+                    let distToShore = shoreX - x;
+                    // Gentle slope up from water
+                    let y = Math.pow(distToShore * 0.3, 1.2) + n * 0.3;
+                    
+                    let color = distToShore < 4 ? PALETTE.sandWet : PALETTE.sandDry;
+
+                    // Add small bumps
+                    if (Math.random() > 0.9) y += 0.5;
+
+                    addVoxel(x, y, z, color);
+                    addVoxel(x, y - 1, z, color); // Solidify base
+                    addVoxel(x, y - 2, z, color);
+                }
+            }
+        }
+
+        // 4. Generate Palm Trees
+        function createTree(baseX, baseZ) {
+            // Find ground height at this position
+            let shoreX = Math.sin(baseZ * 0.04) * 12 + (baseZ * 0.15) - 5;
+            let distToShore = shoreX - baseX;
+            let baseY = Math.pow(distToShore * 0.3, 1.2);
+
+            let height = 14 + Math.random() * 8;
+            let currX = baseX;
+            let currZ = baseZ;
+
+            // Trunk
+            for (let y = 0; y < height; y++) {
+                addVoxel(currX, baseY + y, currZ, PALETTE.treeTrunk);
+                // Curve trunk towards water (positive X)
+                if (y > height * 0.2 && Math.random() > 0.3) currX += 0.5;
+                if (y > height * 0.5 && Math.random() > 0.6) currZ += (Math.random() - 0.5);
+            }
+
+            // Canopy
+            let leafRad = 5 + Math.random() * 2;
+            let topY = baseY + height;
+            for (let lx = -leafRad; lx <= leafRad; lx++) {
+                for (let ly = -2; ly <= 3; ly++) {
+                    for (let lz = -leafRad; lz <= leafRad; lz++) {
+                        let dist = Math.sqrt(lx*lx + (ly*2)*(ly*2) + lz*lz); // flattened sphere
+                        if (dist < leafRad) {
+                            // Make them look like fronds (star patternish)
+                            if (Math.abs(lx) < 2 || Math.abs(lz) < 2 || Math.abs(lx) == Math.abs(lz)) {
+                                if (Math.random() > 0.3) {
+                                    let color = (lx > 0 && ly > 0) ? PALETTE.treeLeafLight : PALETTE.treeLeafDark; // Fake lighting
+                                    addVoxel(currX + lx, topY + ly, currZ + lz, color);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Place trees on the left side
+        for (let i = 0; i < 25; i++) {
+            let tz = -60 + Math.random() * 100;
+            // Calculate shore limit to ensure trees are on sand
+            let shoreX = Math.sin(tz * 0.04) * 12 + (tz * 0.15) - 5;
+            let tx = shoreX - 8 - Math.random() * 20; 
+            createTree(tx, tz);
+        }
+
+        // 5. Add Two People walking
+        let pZ = 5;
+        let shoreX_p = Math.sin(pZ * 0.04) * 12 + (pZ * 0.15) - 5;
+        let pX = shoreX_p - 2; // Walk near water edge
+        let pY = Math.pow(2 * 0.3, 1.2); // ground height
+
+        // Person 1
+        addVoxel(pX, pY+1, pZ, PALETTE.person);
+        addVoxel(pX, pY+2, pZ, PALETTE.person);
+        // Person 2
+        addVoxel(pX + 1.5, pY+1, pZ + 1, PALETTE.person);
+        addVoxel(pX + 1.5, pY+2, pZ + 1, PALETTE.person);
+
+
+        // --- Instanced Mesh Creation ---
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        // Use standard material for shadows and light interaction
+        const material = new THREE.MeshStandardMaterial({
+            roughness: 0.9,
+            metalness: 0.0,
+        });
+
+        const instancedMesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+        instancedMesh.castShadow = true;
+        instancedMesh.receiveShadow = true;
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+
+        for (let i = 0; i < voxels.length; i++) {
+            const v = voxels[i];
+            dummy.position.set(v.x, v.y, v.z);
+            dummy.updateMatrix();
+            instancedMesh.setMatrixAt(i, dummy.matrix);
+            
+            color.setHex(v.color);
+            instancedMesh.setColorAt(i, color);
+        }
+
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        instancedMesh.instanceColor.needsUpdate = true;
+        scene.add(instancedMesh);
+
+        // Hide loading text
+        document.getElementById('loading').style.opacity = 0;
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+
+            // Slight camera bobbing for a handheld/floating feel
+            const time = clock.getElapsedTime();
+            camera.position.y += Math.sin(time * 2) * 0.005;
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voxel Sunset</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffaa00;
+            font-size: 1.2rem;
+            pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            transition: opacity 0.5s ease;
+        }
+    </style>
+    <!-- Use importmap to load modern Three.js ES modules via CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+      /* Hides common overlay IDs and classes used in Three.js examples and generated code */
+      #info, #loading, #ui, #instructions, .label, .overlay, #description {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
+      /* Ensure the body doesn't show selected text cursor interaction outside canvas */
+      body {
+        user-select: none !important;
+      }
+    </style>
+  </head>
+<body>
+    <div id="loading">Generating Voxel World...</div>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        // --- Configuration & Palette ---
+        const config = {
+            gridSizeX: 160,
+            gridSizeZ: 140,
+            voxelSize: 1,
+            sunZ: -65
+        };
+
+        // Colors inspired by the image
+        const PALETTE = {
+            WATER_DARK: 0x1a1219,    // Deep shadowed water
+            WATER_BASE: 0x3d1c12,    // General water surface
+            WATER_REFLECT1: 0x993a0b, // Edge of reflection
+            WATER_REFLECT2: 0xe67300, // Mid reflection
+            WATER_GLINT: 0xffcc44,   // Brightest sun reflection path
+            ROCK_DARK: 0x0f0e0f,     // Deep rock shadows
+            ROCK_LIT: 0x2b2321,      // Rocks catching slight ambient light
+            SUN_CORE: 0xffffff,
+            SUN_GLOW: 0xff9900,
+            CLOUD_BASE: 0x2a171a,    // Dark top clouds
+            CLOUD_LIT: 0x8c3414,     // Clouds lit by sunset
+            CLOUD_BRIGHT: 0xd9661c
+        };
+
+        // --- Setup Scene ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        
+        // Create a gradient sky background
+        const canvas = document.createElement('canvas');
+        canvas.width = 2;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+        gradient.addColorStop(0, '#1b122b');     // Top: Dark purple/blue
+        gradient.addColorStop(0.3, '#5c2222');   // Mid-top: Dark reddish
+        gradient.addColorStop(0.6, '#b84a12');   // Mid: Orange
+        gradient.addColorStop(0.85, '#ff9900');  // Low: Bright orange
+        gradient.addColorStop(1, '#ffe6a0');     // Horizon: Yellowish white
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 2, 512);
+        const bgTexture = new THREE.CanvasTexture(canvas);
+        scene.background = bgTexture;
+        scene.fog = new THREE.FogExp2(0xb84a12, 0.015); // Match fog to mid-sky
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 300);
+        // Position camera low to the water, looking towards horizon
+        camera.position.set(8, 6.4, 36); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.02; // Don't let camera go under water
+        controls.target.set(0, 5, -20);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0x4a2a3a, 0.4); // Dark reddish ambient
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xffaa55, 3.5);
+        sunLight.position.set(0, 8, config.sunZ + 10);
+        sunLight.target.position.set(0, 0, 0);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 10;
+        sunLight.shadow.camera.far = 150;
+        sunLight.shadow.camera.left = -60;
+        sunLight.shadow.camera.right = 60;
+        sunLight.shadow.camera.top = 40;
+        sunLight.shadow.camera.bottom = -40;
+        sunLight.shadow.bias = -0.001;
+        scene.add(sunLight);
+        scene.add(sunLight.target);
+
+        // --- Voxel Generation ---
+        
+        // Simple pseudo-random hash function to avoid loading external noise libraries
+        function hash(x, y) {
+            let n = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+            return n - Math.floor(n);
+        }
+
+        const voxelData = [];
+        
+        function addVoxel(x, y, z, colorStr) {
+            voxelData.push({ x, y, z, color: new THREE.Color(colorStr) });
+        }
+
+        const halfX = config.gridSizeX / 2;
+        const startZ = config.sunZ;
+        const endZ = config.gridSizeZ + startZ;
+
+        // 1. Generate Water & Sun Reflection path
+        for (let z = startZ; z < endZ; z++) {
+            for (let x = -halfX; x < halfX; x++) {
+                let y = 0;
+                let color = PALETTE.WATER_BASE;
+                
+                // Add base waves/noise
+                let n = hash(x * 0.5, z * 0.5);
+                if (n > 0.8) color = PALETTE.WATER_DARK;
+                if (n < 0.1) y = -0.1; // slight depth variation
+
+                // Sun Reflection Path Logic
+                // Reflection path gets wider closer to the camera
+                let distFromHorizon = z - startZ;
+                let pathWidth = 3 + (distFromHorizon * 0.15); 
+                let distToCenterX = Math.abs(x);
+
+                if (distToCenterX < pathWidth) {
+                    let intensity = hash(x * 1.5, z * 1.5);
+                    
+                    // Core reflection
+                    if (distToCenterX < pathWidth * 0.3) {
+                        if (intensity > 0.2) color = PALETTE.WATER_GLINT;
+                        else color = PALETTE.WATER_REFLECT2;
+                        if (intensity > 0.5) y = 0.2; // raise bright sparkles slightly
+                    } 
+                    // Mid reflection
+                    else if (distToCenterX < pathWidth * 0.7) {
+                        if (intensity > 0.4) color = PALETTE.WATER_REFLECT2;
+                        else color = PALETTE.WATER_REFLECT1;
+                    }
+                    // Edge reflection
+                    else {
+                        if (intensity > 0.6) color = PALETTE.WATER_REFLECT1;
+                    }
+                }
+
+                // Silhouette rocks casting shadow on water (rough approximation)
+                if (x < -20 && z > -30) {
+                    if (hash(x,z) > 0.5) color = PALETTE.WATER_DARK;
+                }
+
+                addVoxel(x, y, z, color);
+            }
+        }
+
+        // 2. Generate Left Foreground Rocky Shore
+        for (let z = -20; z < endZ; z++) {
+            for (let x = -halfX; x < -15; x++) {
+                let distFromEdge = -15 - x; // 0 at edge, increasing to left
+                let noiseH = hash(x * 0.3, z * 0.3) * 6;
+                // Height tapers off near water edge and towards horizon
+                let baseHeight = (distFromEdge * 0.6) + noiseH - 2;
+                
+                // Taper towards horizon
+                let zFactor = (z + 20) / (endZ + 20); 
+                baseHeight *= Math.max(0.1, zFactor);
+
+                let h = Math.floor(baseHeight);
+                if (h > 0) {
+                    for (let y = 0; y <= h; y++) {
+                        let color = PALETTE.ROCK_DARK;
+                        // Add some texture/light catching edges
+                        if (y === h && hash(x, y+z) > 0.5) color = PALETTE.ROCK_LIT;
+                        if (hash(x*2, z*2) > 0.9) color = 0x1f1f1f; // dark grey specks
+                        
+                        // Don't draw internal voxels to save geometry
+                        if (y === h || x === -16 || z === -20) {
+                            addVoxel(x, y, z, color);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Generate Distant Island (Right side)
+        for (let z = startZ + 5; z < startZ + 20; z++) {
+            for (let x = 20; x < 45; x++) {
+                let distToCenter = Math.sqrt(Math.pow(x - 32, 2) + Math.pow(z - (startZ + 12), 2));
+                let h = Math.floor(3 - (distToCenter * 0.4) + (hash(x,z)*2));
+                if (h > 0) {
+                    for(let y=0; y<=h; y++) {
+                        if (y === h) addVoxel(x, y, z, PALETTE.ROCK_DARK);
+                    }
+                }
+            }
+        }
+        // Tiny boat speck near island
+        addVoxel(15, 0, startZ + 15, PALETTE.ROCK_DARK);
+        addVoxel(15, 1, startZ + 15, PALETTE.ROCK_DARK);
+
+        // 4. Generate Sun
+        const sunRadius = 4;
+        for (let y = -sunRadius; y <= sunRadius; y++) {
+            for (let x = -sunRadius; x <= sunRadius; x++) {
+                if (x*x + y*y <= sunRadius*sunRadius) {
+                    let cy = y + 5; // Sun height above horizon
+                    // Core is white, edges are orange glow
+                    let d = x*x + y*y;
+                    let color = d < (sunRadius*0.6)**2 ? PALETTE.SUN_CORE : PALETTE.SUN_GLOW;
+                    // Draw a flat circle for the sun at the far back
+                    addVoxel(x, cy, startZ - 1, color);
+                }
+            }
+        }
+
+        // 5. Generate Volumetric-looking Clouds (flat layered clusters)
+        for (let z = startZ; z < startZ + 60; z += 2) {
+            for (let x = -halfX; x < halfX; x += 2) {
+                // Determine cloud density based on low frequency noise
+                let density = hash(x * 0.05, z * 0.05) + hash(x * 0.1, z * 0.1)*0.5;
+                
+                if (density > 0.85) {
+                    let cy = 18 + hash(x,z)*8; // High up
+                    
+                    // Create a small blob
+                    for(let cx = 0; cx < 4; cx++) {
+                        for(let cz = 0; cz < 4; cz++) {
+                            if(hash(cx*x, cz*z) > 0.3) {
+                                let finalY = Math.floor(cy + hash(cx,cz)*2);
+                                let color = PALETTE.CLOUD_BASE;
+                                
+                                // Lower clouds near sun catch fire colors
+                                if (finalY < 22 && Math.abs(x) < 30) {
+                                    if(hash(x, finalY) > 0.5) color = PALETTE.CLOUD_BRIGHT;
+                                    else color = PALETTE.CLOUD_LIT;
+                                }
+                                addVoxel(x + cx, finalY, z + cz, color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Build InstancedMesh ---
+        const geometry = new THREE.BoxGeometry(config.voxelSize, config.voxelSize, config.voxelSize);
+        // Use standard material to react to directional light, but keep roughness high for voxel look
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff,
+            roughness: 0.9,
+            metalness: 0.1
+        });
+        
+        const instancedMesh = new THREE.InstancedMesh(geometry, material, voxelData.length);
+        instancedMesh.castShadow = true;
+        instancedMesh.receiveShadow = true;
+        
+        const dummy = new THREE.Object3D();
+        
+        for (let i = 0; i < voxelData.length; i++) {
+            const data = voxelData[i];
+            dummy.position.set(data.x, data.y, data.z);
+            dummy.updateMatrix();
+            instancedMesh.setMatrixAt(i, dummy.matrix);
+            instancedMesh.setColorAt(i, data.color);
+        }
+        
+        scene.add(instancedMesh);
+
+        // Remove loading text
+        document.getElementById('loading').style.opacity = '0';
+
+        // --- Post-Processing (Bloom for Sunset Glow) ---
+        const renderScene = new RenderPass(scene, camera);
+        
+        // Resolution, strength, radius, threshold
+        const bloomPass = new UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.2,  // strength - makes the sun and reflection pop
+            0.5,  // radius
+            0.6   // threshold - only glow bright things (sun, glints)
+        );
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            
+            // Render via composer instead of renderer for post-processing
+            composer.render();
+        }
+
+        // --- Resize Handler ---
+        window.addEventListener('resize', onWindowResize, false);
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Start
+        animate();
+    </script>
+</body>
+</html>
